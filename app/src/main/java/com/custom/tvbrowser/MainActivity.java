@@ -25,14 +25,18 @@ import java.util.Set;
 
 public class MainActivity extends Activity {
 
+    private FrameLayout rootLayout;
     private WebView webView;
     private View punteroMouse;
+
+    // Manejo nativo de video en pantalla completa
+    private View customVideoView;
+    private WebChromeClient.CustomViewCallback customViewCallback;
 
     private float punteroX = 960f;
     private float punteroY = 540f;
     private final float VELOCIDAD_BASE = 28f;
 
-    // Servidores de publicidad conocidos
     private static final Set<String> LISTA_NEGRA_ADS = new HashSet<>(Arrays.asList(
         "adsterra", "propellerads", "popads", "popcash", "exoclick", "juicyads", 
         "monetag", "yadro", "adkeeper", "bidvertiser", "trafficjunky", "doubleclick",
@@ -45,7 +49,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        FrameLayout rootLayout = new FrameLayout(this);
+        rootLayout = new FrameLayout(this);
         rootLayout.setBackgroundColor(Color.BLACK);
 
         webView = new WebView(this);
@@ -69,7 +73,6 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
-        // Bloqueo total de ventanas nuevas
         settings.setSupportMultipleWindows(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
 
@@ -86,21 +89,21 @@ public class MainActivity extends Activity {
                         return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
                     }
                 }
+                if (url.contains("/popunder") || url.contains("/popup") || url.contains("adbanner")) {
+                    return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
+                }
                 return super.shouldInterceptRequest(view, request);
             }
 
-            // EL ANCLA DE DOMINIO: Destruye el secuestro de pestañas y las redirecciones de video
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri nuevaUri = request.getUrl();
                 String url = nuevaUri.toString();
 
-                // 1. Bloquear esquemas raros de apps externas
                 if (!url.startsWith("http://") && !url.startsWith("https://")) {
                     return true;
                 }
 
-                // 2. Si la orden intenta sacar la pestaña completa de la pantalla:
                 if (request.isForMainFrame()) {
                     String urlActual = view.getUrl();
                     if (urlActual != null) {
@@ -109,18 +112,14 @@ public class MainActivity extends Activity {
                         String nuevoHost = nuevaUri.getHost();
 
                         if (hostActual != null && nuevoHost != null) {
-                            // Si estamos en Google, permite ir a cualquier enlace que elijas
                             if (hostActual.contains("google.")) {
                                 return false; 
                             }
 
-                            // Extraer dominio base (ej. animeonline.ninja)
                             String raizActual = obtenerDominioRaiz(hostActual);
                             String raizNueva = obtenerDominioRaiz(nuevoHost);
 
-                            // Si una orden intenta secuestrar la pestaña hacia un sitio externo:
                             if (!raizActual.equalsIgnoreCase(raizNueva)) {
-                                // ¡SECUESTRO DETECTADO Y DESTRUIDO!
                                 return true; 
                             }
                         }
@@ -135,7 +134,6 @@ public class MainActivity extends Activity {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
 
-                // Destruye window.open y limpia banners
                 String script = "javascript:(function() {" +
                     "window.open = function() { return null; };" +
                     "var css = '[id*=\"ads\"], [class*=\"ads\"], iframe[src*=\"ad\"], .banner-ad { display: none !important; }';" +
@@ -148,9 +146,42 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.setWebChromeClient(new WebChromeClient());
-        webView.loadUrl("https://www.google.com");
+        // CONEXIÓN DE PANTALLA COMPLETA NATIVA
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                if (customVideoView != null) {
+                    onHideCustomView();
+                    return;
+                }
+                customVideoView = view;
+                customViewCallback = callback;
+                webView.setVisibility(View.GONE);
 
+                rootLayout.addView(customVideoView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                ));
+                // Asegura que el puntero quede por encima del video
+                punteroMouse.bringToFront();
+            }
+
+            @Override
+            public void onHideCustomView() {
+                if (customVideoView == null) return;
+                rootLayout.removeView(customVideoView);
+                customVideoView = null;
+                webView.setVisibility(View.VISIBLE);
+                punteroMouse.bringToFront();
+
+                if (customViewCallback != null) {
+                    customViewCallback.onCustomViewHidden();
+                    customViewCallback = null;
+                }
+            }
+        });
+
+        webView.loadUrl("https://www.google.com");
         rootLayout.addView(webView);
 
         punteroMouse = new View(this);
@@ -170,7 +201,6 @@ public class MainActivity extends Activity {
         setContentView(rootLayout);
     }
 
-    // Compara dominios base para no confundir subdominios
     private String obtenerDominioRaiz(String host) {
         String[] partes = host.split("\\.");
         if (partes.length >= 2) {
@@ -203,7 +233,7 @@ public class MainActivity extends Activity {
                     punteroY -= velocidad;
                     if (punteroY < 20) {
                         punteroY = 20;
-                        webView.scrollBy(0, -150);
+                        if (customVideoView == null) webView.scrollBy(0, -150);
                     }
                     actualizarPuntero();
                     return true;
@@ -212,7 +242,7 @@ public class MainActivity extends Activity {
                     punteroY += velocidad;
                     if (punteroY > alto - 45) {
                         punteroY = alto - 45;
-                        webView.scrollBy(0, 150);
+                        if (customVideoView == null) webView.scrollBy(0, 150);
                     }
                     actualizarPuntero();
                     return true;
@@ -231,12 +261,12 @@ public class MainActivity extends Activity {
 
                 case KeyEvent.KEYCODE_PAGE_UP:
                 case KeyEvent.KEYCODE_CHANNEL_UP:
-                    webView.scrollBy(0, -400);
+                    if (customVideoView == null) webView.scrollBy(0, -400);
                     return true;
 
                 case KeyEvent.KEYCODE_PAGE_DOWN:
                 case KeyEvent.KEYCODE_CHANNEL_DOWN:
-                    webView.scrollBy(0, 400);
+                    if (customVideoView == null) webView.scrollBy(0, 400);
                     return true;
 
                 case KeyEvent.KEYCODE_DPAD_CENTER:
@@ -244,7 +274,23 @@ public class MainActivity extends Activity {
                     hacerClicEnPuntero(punteroX + 13, punteroY + 13);
                     return true;
 
+                // BOTÓN ATRÁS: Si estás en pantalla completa, sale al modo normal sin cerrar la página
                 case KeyEvent.KEYCODE_BACK:
+                    if (customVideoView != null) {
+                        WebChromeClient client = new WebChromeClient();
+                        // Salir de pantalla completa limpiamente
+                        if (customViewCallback != null) {
+                            customViewCallback.onCustomViewHidden();
+                        }
+                        if (customVideoView != null) {
+                            rootLayout.removeView(customVideoView);
+                            customVideoView = null;
+                            webView.setVisibility(View.VISIBLE);
+                            punteroMouse.bringToFront();
+                        }
+                        return true;
+                    }
+
                     if (webView.canGoBack()) {
                         webView.goBack();
                         return true;
@@ -264,13 +310,15 @@ public class MainActivity extends Activity {
 
     private void hacerClicEnPuntero(float x, float y) {
         long downTime = SystemClock.uptimeMillis();
+        // Si el video está en pantalla completa, el clic va al video; si no, al navegador
+        View vistaObjetivo = (customVideoView != null) ? customVideoView : webView;
 
         MotionEvent eventoAbajo = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0);
-        webView.dispatchTouchEvent(eventoAbajo);
+        vistaObjetivo.dispatchTouchEvent(eventoAbajo);
         eventoAbajo.recycle();
 
         MotionEvent eventoArriba = MotionEvent.obtain(downTime, downTime + 40, MotionEvent.ACTION_UP, x, y, 0);
-        webView.dispatchTouchEvent(eventoArriba);
+        vistaObjetivo.dispatchTouchEvent(eventoArriba);
         eventoArriba.recycle();
     }
 }
