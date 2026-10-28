@@ -38,16 +38,18 @@ public class MainActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        // 1. SOLUCIÓN CLOUDFLARE: Activar Cookies completas (Primeras y Terceros)
+        // 1. COOKIES Y PERSISTENCIA (Para Cloudflare)
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
-        // 2. Ajustes de Motor avanzados
+        // 2. CONFIGURACIÓN OFICIAL COMPATIBLE CON CLOUDFLARE TURNSTILE
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setUseWideViewPort(true);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
@@ -56,10 +58,17 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
 
-        // Identidad coherente de Chrome (sin mentirle al sistema de Cloudflare)
-        settings.setUserAgentString("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
+        // ELIMINADA LA MENTIRA: Dejamos que use su identidad nativa real para que no choque con Cloudflare ni Google
 
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                // Graba el pase de Cloudflare en disco de inmediato
+                CookieManager.getInstance().flush();
+            }
+        });
+
         webView.setWebChromeClient(new WebChromeClient());
         webView.loadUrl("https://www.google.com");
 
