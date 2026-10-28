@@ -3,7 +3,6 @@ package com.custom.tvbrowser;
 import android.app.Activity;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
-import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.KeyEvent;
@@ -32,7 +31,7 @@ public class MainActivity extends Activity {
     private float punteroY = 540f;
     private final float VELOCIDAD_BASE = 28f;
 
-    // LISTA NEGRA UBLOCK: Los servidores de anuncios, pop-ups y rastreadores más agresivos
+    // Servidores de publicidad conocidos (sin tocar los servidores de video de anime)
     private static final Set<String> LISTA_NEGRA_ADS = new HashSet<>(Arrays.asList(
         "adsterra", "propellerads", "popads", "popcash", "exoclick", "juicyads", 
         "monetag", "yadro", "adkeeper", "bidvertiser", "trafficjunky", "doubleclick",
@@ -68,7 +67,10 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
 
-        // 1. ASESINO DE POP-UPS (Ventanas emergentes desactivadas de raíz)
+        // CLAVE: Permite reproducir videos de servidores externos sin pantalla negra
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+
+        // Matar apertura de pestañas secundarias
         settings.setSupportMultipleWindows(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
 
@@ -76,39 +78,28 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(true);
         settings.setDisplayZoomControls(false);
 
-        // 2. EL ESCUDO UBLOCK INTERCEPTOR
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString().toLowerCase();
 
-                // Revisar si la petición viene de un servidor de anuncios o pop-ups
                 for (String adHost : LISTA_NEGRA_ADS) {
                     if (url.contains(adHost)) {
-                        // DESTRUIDO: Devuelve una respuesta vacía en 0ms
                         return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
                     }
                 }
-
-                // Bloquear trampas con extensiones raras de anuncios
-                if (url.contains("/popunder") || url.contains("/popup") || url.contains("adbanner")) {
-                    return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
-                }
-
                 return super.shouldInterceptRequest(view, request);
             }
 
-            // Evitar que la web te secuestre redirigiéndote a otra página de golpe
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // Bloquear esquemas externos como intent://, market:// o whatsapp://
                 if (url.startsWith("intent:") || url.startsWith("market:") || url.startsWith("whatsapp:")) {
-                    return true; // Bloqueado
+                    return true;
                 }
                 for (String adHost : LISTA_NEGRA_ADS) {
                     if (url.toLowerCase().contains(adHost)) {
-                        return true; // Bloquea la redirección al anuncio
+                        return true;
                     }
                 }
                 return false;
@@ -119,8 +110,16 @@ public class MainActivity extends Activity {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
 
-                // 3. FILTRADO COSMÉTICO: Aniquila capas invisibles y desactiva window.open
-                inyectarEscudoAntiAnuncios(view);
+                // FILTRADO QUIRÚRGICO: Solo borra anuncios reales sin romper menús de video
+                String script = "javascript:(function() {" +
+                    "window.open = function() { return null; };" +
+                    "var css = '[id*=\"ads\"], [class*=\"ads\"], iframe[src*=\"ad\"], .banner-ad { display: none !important; }';" +
+                    "var style = document.createElement('style');" +
+                    "style.type = 'text/css';" +
+                    "style.innerHTML = css;" +
+                    "document.head.appendChild(style);" +
+                    "})()";
+                view.evaluateJavascript(script, null);
             }
         });
 
@@ -129,7 +128,6 @@ public class MainActivity extends Activity {
 
         rootLayout.addView(webView);
 
-        // Puntero Virtual
         punteroMouse = new View(this);
         int tamano = 26;
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(tamano, tamano);
@@ -145,22 +143,6 @@ public class MainActivity extends Activity {
         actualizarPuntero();
 
         setContentView(rootLayout);
-    }
-
-    // Inyección de código quirúrgico para limpiar la web
-    private void inyectarEscudoAntiAnuncios(WebView view) {
-        String script = "javascript:(function() {" +
-            "window.open = function() { return null; };" + // Mata cualquier intento de abrir pestañas
-            "var css = '[id*=\"pop\"], [class*=\"pop\"], [id*=\"banner\"], [class*=\"banner\"], " +
-            "[id*=\"ads\"], [class*=\"ads\"], iframe[src*=\"ad\"], " +
-            "div[style*=\"z-index: 2147483647\"], div[style*=\"z-index: 999999\"] " +
-            "{ display: none !important; pointer-events: none !important; }';" +
-            "var style = document.createElement('style');" +
-            "style.type = 'text/css';" +
-            "style.innerHTML = css;" +
-            "document.head.appendChild(style);" +
-            "})()";
-        view.evaluateJavascript(script, null);
     }
 
     private void actualizarPuntero() {
