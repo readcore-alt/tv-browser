@@ -3,6 +3,7 @@ package com.custom.tvbrowser;
 import android.app.Activity;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.KeyEvent;
@@ -31,7 +32,7 @@ public class MainActivity extends Activity {
     private float punteroY = 540f;
     private final float VELOCIDAD_BASE = 28f;
 
-    // Servidores de publicidad conocidos (sin tocar los servidores de video de anime)
+    // Servidores de publicidad conocidos
     private static final Set<String> LISTA_NEGRA_ADS = new HashSet<>(Arrays.asList(
         "adsterra", "propellerads", "popads", "popcash", "exoclick", "juicyads", 
         "monetag", "yadro", "adkeeper", "bidvertiser", "trafficjunky", "doubleclick",
@@ -66,11 +67,9 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-
-        // CLAVE: Permite reproducir videos de servidores externos sin pantalla negra
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
-        // Matar apertura de pestañas secundarias
+        // Bloqueo total de ventanas nuevas
         settings.setSupportMultipleWindows(false);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
 
@@ -82,7 +81,6 @@ public class MainActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString().toLowerCase();
-
                 for (String adHost : LISTA_NEGRA_ADS) {
                     if (url.contains(adHost)) {
                         return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream("".getBytes()));
@@ -91,17 +89,44 @@ public class MainActivity extends Activity {
                 return super.shouldInterceptRequest(view, request);
             }
 
+            // EL ANCLA DE DOMINIO: Destruye el secuestro de pestañas y las redirecciones de video
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = request.getUrl().toString();
-                if (url.startsWith("intent:") || url.startsWith("market:") || url.startsWith("whatsapp:")) {
+                Uri nuevaUri = request.getUrl();
+                String url = nuevaUri.toString();
+
+                // 1. Bloquear esquemas raros de apps externas
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
                     return true;
                 }
-                for (String adHost : LISTA_NEGRA_ADS) {
-                    if (url.toLowerCase().contains(adHost)) {
-                        return true;
+
+                // 2. Si la orden intenta sacar la pestaña completa de la pantalla:
+                if (request.isForMainFrame()) {
+                    String urlActual = view.getUrl();
+                    if (urlActual != null) {
+                        Uri uriActual = Uri.parse(urlActual);
+                        String hostActual = uriActual.getHost();
+                        String nuevoHost = nuevaUri.getHost();
+
+                        if (hostActual != null && nuevoHost != null) {
+                            // Si estamos en Google, permite ir a cualquier enlace que elijas
+                            if (hostActual.contains("google.")) {
+                                return false; 
+                            }
+
+                            // Extraer dominio base (ej. animeonline.ninja)
+                            String raizActual = obtenerDominioRaiz(hostActual);
+                            String raizNueva = obtenerDominioRaiz(nuevoHost);
+
+                            // Si una orden intenta secuestrar la pestaña hacia un sitio externo:
+                            if (!raizActual.equalsIgnoreCase(raizNueva)) {
+                                // ¡SECUESTRO DETECTADO Y DESTRUIDO!
+                                return true; 
+                            }
+                        }
                     }
                 }
+
                 return false;
             }
 
@@ -110,7 +135,7 @@ public class MainActivity extends Activity {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
 
-                // FILTRADO QUIRÚRGICO: Solo borra anuncios reales sin romper menús de video
+                // Destruye window.open y limpia banners
                 String script = "javascript:(function() {" +
                     "window.open = function() { return null; };" +
                     "var css = '[id*=\"ads\"], [class*=\"ads\"], iframe[src*=\"ad\"], .banner-ad { display: none !important; }';" +
@@ -143,6 +168,15 @@ public class MainActivity extends Activity {
         actualizarPuntero();
 
         setContentView(rootLayout);
+    }
+
+    // Compara dominios base para no confundir subdominios
+    private String obtenerDominioRaiz(String host) {
+        String[] partes = host.split("\\.");
+        if (partes.length >= 2) {
+            return partes[partes.length - 2] + "." + partes[partes.length - 1];
+        }
+        return host;
     }
 
     private void actualizarPuntero() {
